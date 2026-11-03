@@ -170,7 +170,7 @@ function saveProgress(force = false) {
   const note=$('#save-note'); if(note) note.textContent='Место сохранено · '+timeText(entry.current_time);
   if(db&&state.user&&(force||Date.now()-state.lastCloudSave>12000)) {
     state.lastCloudSave=Date.now();
-    db.from('watch_progress').upsert({user_id:state.user.id,...entry},{onConflict:'user_id,video_id'}).then(({error})=>{if(error)console.warn('Cloud save failed:',error.message);});
+    db.from('watch_progress').upsert({user_id:state.user.id,video_id:entry.video_id,title:entry.title,position_seconds:entry.current_time,duration_seconds:entry.duration_seconds,updated_at:entry.updated_at},{onConflict:'user_id,video_id'}).then(({error})=>{if(error)console.warn('Cloud save failed:',error.message);});
   }
 }
 function setVolume(value) {
@@ -181,15 +181,15 @@ async function syncCloud() {
   if(!db||!state.user||state.cloudBusy) return;
   state.cloudBusy=true;
   try {
-    const {data,error}=await db.from('watch_progress').select('video_id,title,current_time,duration_seconds,updated_at');
+    const {data,error}=await db.from('watch_progress').select('video_id,title,position_seconds,duration_seconds,updated_at');
     if(error) throw error;
     (data||[]).forEach(item=>{
       const id=String(item.video_id), local=state.progress[id];
       if(!local||new Date(item.updated_at||0)>=new Date(local.updated_at||0))
-        state.progress[id]={video_id:id,title:item.title||'',current_time:Number(item.current_time||0),duration_seconds:Number(item.duration_seconds||0),updated_at:item.updated_at||new Date().toISOString()};
+        state.progress[id]={video_id:id,title:item.title||'',current_time:Number(item.position_seconds||0),duration_seconds:Number(item.duration_seconds||0),updated_at:item.updated_at||new Date().toISOString()};
     });
     persist();
-    const rows=Object.entries(state.progress).map(([id,p])=>({user_id:state.user.id,video_id:id,title:p.title||'',current_time:Number(p.current_time||0),duration_seconds:Number(p.duration_seconds||0),updated_at:p.updated_at||new Date().toISOString()}));
+    const rows=Object.entries(state.progress).map(([id,p])=>({user_id:state.user.id,video_id:id,title:p.title||'',position_seconds:Number(p.current_time||0),duration_seconds:Number(p.duration_seconds||0),updated_at:p.updated_at||new Date().toISOString()}));
     if(rows.length){const result=await db.from('watch_progress').upsert(rows,{onConflict:'user_id,video_id'});if(result.error)throw result.error;}
     if(state.view!=='player') render();
     toast('История синхронизирована');
