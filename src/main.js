@@ -151,6 +151,7 @@ function playerMessage(event) {
       toast('История готова к просмотру'); break;
     case 'player:playStart': state.playing = true; state.autoplay = false; updatePlayer(); break;
     case 'player:currentTime': if (Number.isFinite(Number(d.time))) { state.time = Number(d.time); updatePlayer(); } break;
+    case 'player:durationChange':
     case 'player:duration':
     case 'player:videoDuration': if (Number.isFinite(Number(d.duration))) { state.duration = Number(d.duration); updatePlayer(); } break;
     case 'player:changeState': if (typeof d.state === 'string') { const s=d.state.toLowerCase(); state.playing=s.includes('play')&&!s.includes('pause'); updatePlayer(); } break;
