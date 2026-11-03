@@ -1,0 +1,6 @@
+{
+  "name":"history-for-grandma","private":true,"version":"0.1.0","type":"module",
+  "scripts":{"dev":"vite --host 0.0.0.0","sync:rutube":"node scripts/sync-rutube.mjs","build":"vite build","preview":"vite preview --host 0.0.0.0"},
+  "dependencies":{"@supabase/supabase-js":"^2.57.0"},
+  "devDependencies":{"vite":"^6.3.5"}
+}

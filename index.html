@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f3ec">
+  <meta name="description" content="Уютная семейная библиотека жизненных историй. Продолжайте просмотр с того самого места.">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <title>Истории для души</title>
+</head>
+<body>
+  <div class="app-frame">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Истории для души — главная"><span class="brand-mark">✿</span><span class="brand-copy"><strong>Истории для души</strong><small>Время для себя</small></span></a>
+      <nav class="main-nav" aria-label="Главное меню"><button class="nav-button is-active" data-view="home">Главная</button><button class="nav-button" data-view="history">Моя история</button></nav>
+      <button class="account-button" id="account-button" type="button"><span class="account-avatar">♡</span><span id="account-label">Войти</span></button>
+    </header>
+    <main id="main-view" tabindex="-1"><div class="loading-state"><span class="loading-flower">✿</span><p>Собираем любимые истории…</p></div></main>
+    <footer class="site-footer"><span>С теплом, для уютных вечеров</span><a href="https://rutube.ru/channel/60691916/" target="_blank" rel="noopener noreferrer">Канал автора на RuTube ↗</a></footer>
+  </div>
+  <div id="dialog-layer" class="dialog-layer" hidden></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
