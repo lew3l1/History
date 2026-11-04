@@ -5,12 +5,17 @@ const $ = (s, root = document) => root.querySelector(s);
 const base = import.meta.env.BASE_URL || '/';
 const url = import.meta.env.VITE_SUPABASE_URL || '';
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const db = url && anon ? createClient(url, anon) : null;
+const db = url && anon ? createClient(url, anon, { auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true } }) : null;
 const KEY = 'history-for-grandma-progress-v1';
 const VOLUME_KEY = 'history-for-grandma-volume-v1';
+const FAVORITES_KEY = 'history-for-grandma-favorites-v1';
+const readFavorites = () => { try { const value = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '{}'); return Array.isArray(value) ? Object.fromEntries(value.map(id => [String(id), { video_id: String(id) }])) : (value && typeof value === 'object' ? value : {}); } catch { return {}; } };
+const persistFavorites = () => { try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(state.favorites)); } catch { toast('Не получилось сохранить избранное на этом устройстве.'); } };
+const isFavorite = id => Boolean(state.favorites[String(id)]);
+const favoriteButton = (video, extraClass = '') => { const active = isFavorite(video.id); return '<button class="favorite-toggle ' + extraClass + (active ? ' is-favorite' : '') + '" type="button" data-favorite="' + esc(video.id) + '" aria-label="' + (active ? 'Убрать из избранного' : 'Добавить в избранное') + '" aria-pressed="' + active + '" title="' + (active ? 'Убрать из избранного' : 'Добавить в избранное') + '"><span aria-hidden="true">' + (active ? '♥' : '♡') + '</span></button>'; };
 const readProgress = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } };
 const state = {
-  videos: [], progress: readProgress(), user: null, view: 'home', video: null,
+  videos: [], progress: readProgress(), favorites: readFavorites(), user: null, view: 'home', video: null,
   time: 0, duration: 0, volume: Number(localStorage.getItem(VOLUME_KEY) || .8),
   ready: false, playing: false, autoplay: false, resume: 0, nextPrompt: false,
   authMode: 'signin', search: '', visible: 24, lastCloudSave: 0, cloudBusy: false
@@ -40,11 +45,12 @@ function card(v) {
   const p = progressFor(v.id), duration = Number(v.duration || 0), watched = p ? Number(p.current_time || 0) : 0;
   const pct = duration ? Math.min(100, Math.round(watched / duration * 100)) : 0;
   const cover = v.thumbnail ? '<img src="' + esc(v.thumbnail) + '" alt="" loading="lazy" onerror="this.hidden=true">' : '<span class="cover-placeholder">✿</span>';
-  return '<button class="video-card" type="button" data-open-video="' + esc(v.id) + '"><span class="video-cover">' + cover +
+  return '<article class="video-card-wrap"><button class="video-card" type="button" data-open-video="' + esc(v.id) + '"><span class="video-cover">' + cover +
     (pct ? '<span class="cover-progress"><i style="width:' + pct + '%"></i></span>' : '') + '<span class="cover-play">▶</span></span>' +
     '<span class="video-card-copy"><strong>' + esc(v.title || 'История из жизни') + '</strong><span class="video-card-meta">' +
     (duration ? timeText(duration) : 'Видео с RuTube') + (v.created_at ? ' · ' + dateText(v.created_at) : '') + '</span>' +
-    (watched ? '<span class="video-resume-label">Остановились на ' + timeText(watched) + '</span>' : '') + '</span></button>';
+    (watched ? '<span class="video-resume-label">Остановились на ' + timeText(watched) + '</span>' : '') + '</span></button>' +
+    favoriteButton(v) + '</article>';
 }
 function lastWatched() {
   const items = Object.values(state.progress).filter(x => x && Number(x.current_time) > 0).sort((a,b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
@@ -82,6 +88,64 @@ function historyMarkup() {
     (entries.length ? '<div class="history-summary"><span class="history-summary-icon">♡</span><div><strong>Сохранено историй: ' + entries.length + '</strong><p>Нажмите на обложку, чтобы продолжить.</p></div></div><div class="video-grid history-grid">' + cards + '</div>' :
       '<div class="empty-panel history-empty"><span class="empty-icon">♡</span><strong>Здесь пока тихо</strong><p>Начните смотреть любую историю, и мы сохраним место, на котором вы остановились.</p><button class="primary-button" data-view="home">Найти первую историю <span>→</span></button></div>');
 }
+function favoritesMarkup() {
+  const entries = Object.entries(state.favorites);
+  const cards = entries.map(([id, saved]) => {
+    const video = state.videos.find(v => String(v.id) === String(id)) || {
+      id, title: saved.title || 'История из избранного',
+      thumbnail: saved.thumbnail || '', duration: saved.duration || 0,
+      created_at: saved.created_at || ''
+    };
+    return card(video);
+  }).join('');
+  return '<section class="page-intro"><span class="eyebrow">ТО, К ЧЕМУ ХОЧЕТСЯ ВЕРНУТЬСЯ</span><h1>Избранное</h1><p>Сохраняйте любимые истории сердечком. Они всегда будут под рукой.</p></section>' +
+    (entries.length ? '<div class="history-summary"><span class="history-summary-icon">♥</span><div><strong>В избранном: ' + entries.length + '</strong><p>Любимые выпуски в одном месте.</p></div></div><div class="video-grid favorites-grid">' + cards + '</div>' :
+      '<div class="empty-panel history-empty"><span class="empty-icon">♡</span><strong>Пока нет любимых историй</strong><p>Нажмите на сердечко на понравившейся истории — она появится здесь.</p><button class="primary-button" data-view="home">Выбрать историю <span>→</span></button></div>');
+}
+function updateFavoriteButtons(id) {
+  const active = isFavorite(id);
+  document.querySelectorAll('[data-favorite="' + CSS.escape(String(id)) + '"]').forEach(button => {
+    button.classList.toggle('is-favorite', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.setAttribute('aria-label', active ? 'Убрать из избранного' : 'Добавить в избранное');
+    button.title = active ? 'Убрать из избранного' : 'Добавить в избранное';
+    const icon = button.querySelector('span');
+    if (icon) icon.textContent = active ? '♥' : '♡';
+  });
+}
+async function toggleFavorite(id) {
+  id = String(id);
+  const video = state.videos.find(v => String(v.id) === id) || state.favorites[id] || (state.video && String(state.video.id) === id ? state.video : null);
+  if (!video) return;
+  const wasFavorite = isFavorite(id);
+  const previous = state.favorites[id];
+  if (wasFavorite) delete state.favorites[id];
+  else state.favorites[id] = {
+    video_id: id, title: video.title || 'История из жизни',
+    thumbnail: video.thumbnail || '', duration: Number(video.duration || 0),
+    created_at: video.created_at || '', favorited_at: new Date().toISOString()
+  };
+  persistFavorites();
+
+  if (db && state.user) {
+    const result = wasFavorite
+      ? await db.from('favorite_videos').delete().eq('video_id', id)
+      : await db.from('favorite_videos').upsert({
+          user_id: state.user.id, video_id: id, title: video.title || 'История из жизни'
+        }, { onConflict: 'user_id,video_id' });
+    if (result.error) {
+      if (wasFavorite) state.favorites[id] = previous;
+      persistFavorites();
+      updateFavoriteButtons(id);
+      toast('Не удалось обновить облачное избранное. Проверьте таблицу favorite_videos.');
+      console.error('Favorite sync error:', result.error);
+      return;
+    }
+  }
+  if (state.view === 'player') updateFavoriteButtons(id);
+  else render();
+  toast(wasFavorite ? 'История убрана из избранного' : 'История добавлена в избранное');
+}
 function adjacent(delta) {
   if (!state.video) return null;
   const i = state.videos.findIndex(v => String(v.id) === String(state.video.id));
@@ -90,16 +154,18 @@ function adjacent(delta) {
 function playerMarkup() {
   if (!state.video) return '<div class="empty-panel"><strong>Сначала выберите историю</strong><button class="primary-button" data-view="home">К историям</button></div>';
   const prev = adjacent(-1), next = adjacent(1);
-  return '<section class="player-page"><button class="back-link" data-view="home"><span>←</span> Назад к историям</button><div class="player-heading"><span class="eyebrow">СЕЙЧАС В ВАШЕЙ КОЛЛЕКЦИИ</span><h1>' + esc(state.video.title) + '</h1><p>Смотрите или слушайте в удобном темпе. Ваше место сохранится автоматически.</p></div>' +
+  return '<section class="player-page"><button class="back-link" data-view="home"><span>←</span> Назад к историям</button>' +
+    '<div class="player-heading"><div class="player-title-copy"><span class="eyebrow">СЕЙЧАС В ВАШЕЙ КОЛЛЕКЦИИ</span><h1>' + esc(state.video.title) + '</h1><p>Смотрите или слушайте в удобном темпе. Ваше место сохранится автоматически.</p></div>' + favoriteButton(state.video, 'player-favorite') + '</div>' +
     '<div class="player-card"><div class="video-stage"><iframe id="rutube-player" title="' + esc(state.video.title) + '" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>' +
     '<div class="player-controls"><div class="seek-row"><span id="current-time">0:00</span><input id="seek-slider" type="range" min="0" max="1000" value="0" aria-label="Позиция в видео"><span id="duration-time">0:00</span></div>' +
-    '<div class="control-row"><button class="round-control" data-player="previous" aria-label="Предыдущая история" ' + (prev ? '' : 'disabled') + '>◀</button><button class="round-control" data-player="rewind" aria-label="Назад на 15 секунд">↶<small>15</small></button><button class="play-control" data-player="toggle" aria-label="Пауза или воспроизведение"><span id="play-symbol">▶</span></button><button class="round-control" data-player="forward" aria-label="Вперёд на 30 секунд">↷<small>30</small></button><button class="round-control" data-player="next" aria-label="Следующая история" ' + (next ? '' : 'disabled') + '>▶</button><button class="round-control stop-control" data-player="stop" aria-label="Остановить">■</button></div>' +
+    '<div class="control-row"><button class="skip-control" data-player="rewind" type="button" aria-label="Назад на 15 секунд"><span>↶</span><small>15 сек.</small></button><button class="play-control" data-player="toggle" type="button" aria-label="Пауза или воспроизведение"><span id="play-symbol">▶</span></button><button class="skip-control" data-player="forward" type="button" aria-label="Вперёд на 30 секунд"><span>↷</span><small>30 сек.</small></button></div>' +
+    '<div class="track-controls"><button class="track-button" data-player="previous" type="button" ' + (prev ? '' : 'disabled') + '><span>⏮</span><small>Предыдущая</small></button><button class="track-button stop-track-button" data-player="stop" type="button"><span>■</span><small>Остановить</small></button><button class="track-button" data-player="next" type="button" ' + (next ? '' : 'disabled') + '><span>⏭</span><small>Следующая</small></button></div>' +
     '<div class="volume-row"><span>♪</span><label for="volume-slider">Громкость</label><input id="volume-slider" type="range" min="0" max="100" value="' + Math.round(state.volume * 100) + '" aria-label="Громкость"><span id="volume-value">' + Math.round(state.volume * 100) + '%</span><span class="save-note" id="save-note">Место сохраняется автоматически</span></div></div></div>' +
-    '<div class="next-suggestion" id="next-suggestion" ' + (state.nextPrompt && next ? '' : 'hidden') + '><div><span class="eyebrow">ИСТОРИЯ ЗАВЕРШЕНА</span><strong>Посмотрим ещё одну?</strong><p>' + (next ? esc(next.title) : '') + '</p></div>' + (next ? '<button class="primary-button" data-player="next">Следующая история <span>→</span></button>' : '') + '</div><p class="player-footnote">Видео воспроизводится на RuTube. Если плеер не загрузился, проверьте подключение к интернету.</p></section>';
+    '<div class="next-suggestion" id="next-suggestion" ' + (state.nextPrompt && next ? '' : 'hidden') + '><div><span class="eyebrow">ИСТОРИЯ ЗАВЕРШЕНА</span><strong>Посмотрим ещё одну?</strong><p>' + (next ? esc(next.title) : '') + '</p></div>' + (next ? '<button class="primary-button" data-player="next">Следующая история <span>→</span></button>' : '') + '</div><p class="player-footnote">Видео воспроизводится на RuTube. Рекламные вставки контролируются самим RuTube.</p></section>';
 }
 function render() {
   const main = $('#main-view');
-  main.innerHTML = state.view === 'history' ? historyMarkup() : state.view === 'player' ? playerMarkup() : homeMarkup();
+  main.innerHTML = state.view === 'history' ? historyMarkup() : state.view === 'favorites' ? favoritesMarkup() : state.view === 'player' ? playerMarkup() : homeMarkup();
   document.querySelectorAll('.nav-button').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view || (state.view === 'player' && b.dataset.view === 'home')));
   if (state.view === 'home') grid();
   if (state.view === 'player') mountPlayer();
@@ -178,23 +244,68 @@ function setVolume(value) {
   command('player:setVolume',{volume:state.volume}); updatePlayer();
 }
 async function syncCloud() {
-  if(!db||!state.user||state.cloudBusy) return;
-  state.cloudBusy=true;
+  if (!db || !state.user || state.cloudBusy) return;
+  state.cloudBusy = true;
   try {
-    const {data,error}=await db.from('watch_progress').select('video_id,title,position_seconds,duration_seconds,updated_at');
-    if(error) throw error;
-    (data||[]).forEach(item=>{
-      const id=String(item.video_id), local=state.progress[id];
-      if(!local||new Date(item.updated_at||0)>=new Date(local.updated_at||0))
-        state.progress[id]={video_id:id,title:item.title||'',current_time:Number(item.position_seconds||0),duration_seconds:Number(item.duration_seconds||0),updated_at:item.updated_at||new Date().toISOString()};
+    const { data, error } = await db.from('watch_progress')
+      .select('video_id,title,position_seconds,duration_seconds,updated_at');
+    if (error) throw error;
+    (data || []).forEach(item => {
+      const id = String(item.video_id), local = state.progress[id];
+      if (!local || new Date(item.updated_at || 0) >= new Date(local.updated_at || 0)) {
+        state.progress[id] = {
+          video_id: id, title: item.title || '',
+          current_time: Number(item.position_seconds || 0),
+          duration_seconds: Number(item.duration_seconds || 0),
+          updated_at: item.updated_at || new Date().toISOString()
+        };
+      }
     });
     persist();
-    const rows=Object.entries(state.progress).map(([id,p])=>({user_id:state.user.id,video_id:id,title:p.title||'',position_seconds:Number(p.current_time||0),duration_seconds:Number(p.duration_seconds||0),updated_at:p.updated_at||new Date().toISOString()}));
-    if(rows.length){const result=await db.from('watch_progress').upsert(rows,{onConflict:'user_id,video_id'});if(result.error)throw result.error;}
-    if(state.view!=='player') render();
-    toast('История синхронизирована');
-  } catch(e) { console.error('Cloud sync failed:',e); toast('Не удалось синхронизировать. Локальная копия сохранена.'); }
-  finally { state.cloudBusy=false; }
+
+    const rows = Object.entries(state.progress).map(([id,p]) => ({
+      user_id: state.user.id, video_id: id, title: p.title || '',
+      position_seconds: Number(p.current_time || 0),
+      duration_seconds: Number(p.duration_seconds || 0),
+      updated_at: p.updated_at || new Date().toISOString()
+    }));
+    if (rows.length) {
+      const uploaded = await db.from('watch_progress').upsert(rows, { onConflict: 'user_id,video_id' });
+      if (uploaded.error) throw uploaded.error;
+    }
+
+    const remoteFavorites = await db.from('favorite_videos').select('video_id,title,created_at');
+    if (!remoteFavorites.error) {
+      (remoteFavorites.data || []).forEach(item => {
+        const id = String(item.video_id), local = state.favorites[id];
+        state.favorites[id] = {
+          ...(local || {}), video_id: id,
+          title: item.title || local?.title || 'История из жизни',
+          created_at: item.created_at || local?.created_at || ''
+        };
+      });
+      persistFavorites();
+      const favoriteRows = Object.entries(state.favorites).map(([id,item]) => ({
+        user_id: state.user.id, video_id: id, title: item.title || 'История из жизни'
+      }));
+      if (favoriteRows.length) {
+        const uploaded = await db.from('favorite_videos').upsert(favoriteRows, { onConflict: 'user_id,video_id' });
+        if (uploaded.error) throw uploaded.error;
+      }
+    } else if (!['42P01','PGRST205'].includes(remoteFavorites.error.code)) {
+      throw remoteFavorites.error;
+    } else {
+      console.warn('favorite_videos table is not installed yet. Local favorites remain available.');
+    }
+
+    if (state.view !== 'player') render();
+    toast('История и избранное синхронизированы');
+  } catch (e) {
+    console.error('Cloud sync failed:', e);
+    toast('Не удалось синхронизировать. Локальные данные сохранены.');
+  } finally {
+    state.cloudBusy = false;
+  }
 }
 function accountButton() {
   $('#account-label').textContent=state.user?(state.user.email||'Мой аккаунт'):'Войти';
@@ -239,6 +350,7 @@ document.addEventListener('click',async e=>{
   const t=e.target.closest('button,a');if(!t)return;
   if(t.id==='account-button'){accountDialog();return;}
   if(t.hasAttribute('data-close')){closeDialog();return;}
+  if(t.dataset.favorite){await toggleFavorite(t.dataset.favorite);return;}
   if(t.dataset.view){setView(t.dataset.view);return;}
   if(t.dataset.openVideo){const v=state.videos.find(x=>String(x.id)===String(t.dataset.openVideo));if(v)openVideo(v,true);return;}
   if(t.hasAttribute('data-scroll')){$('#catalog')?.scrollIntoView({behavior:'smooth'});return;}
