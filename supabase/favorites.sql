@@ -7,6 +7,8 @@ create table if not exists public.favorite_videos (
   primary key (user_id, video_id)
 );
 
+grant select, insert, update, delete on table public.favorite_videos to authenticated;
+
 alter table public.favorite_videos enable row level security;
 
 drop policy if exists "Users can read their own favorites" on public.favorite_videos;
