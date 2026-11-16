@@ -171,30 +171,14 @@ function playerMarkup() {
     '<div class="next-suggestion" id="next-suggestion" ' + (state.nextPrompt && next ? '' : 'hidden') + '><div><span class="eyebrow">ИСТОРИЯ ЗАВЕРШЕНА</span><strong>Посмотрим ещё одну?</strong><p>' + (next ? esc(next.title) : '') + '</p></div>' + (next ? '<button class="primary-button" data-player="next">Следующая история <span>→</span></button>' : '') + '</div><p class="player-footnote">' + (native ? 'Это видео загружено в семейную библиотеку. Рекламных вставок в собственном плеере нет.' : 'Воспроизведение предоставляется встроенным плеером RuTube. Повторные рекламные паузы, если их назначает RuTube, нельзя отключить настройкой сайта.') + '</p></section>';
 }
 function getRutubeFrame() {
-  return $('#rutube-player') || $('#rutube-frame-retainer #rutube-player');
-}
-function parkRutubeFrame() {
-  const frame = $('#rutube-player');
-  if (!frame) return;
-  let retainer = $('#rutube-frame-retainer');
-  if (!retainer) {
-    retainer = document.createElement('div');
-    retainer.id = 'rutube-frame-retainer';
-    retainer.className = 'player-frame-retainer';
-    retainer.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(retainer);
-  }
-  if (frame.parentElement !== retainer) retainer.appendChild(frame);
+  return $('#rutube-player');
 }
 function render() {
   const main = $('#main-view');
-  parkRutubeFrame();
+  // Always create a fresh player element for the selected video.
+  // Reusing a cross-origin RuTube iframe and changing its video via postMessage
+  // caused stale video IDs and the previous video to reappear on some devices.
   main.innerHTML = state.view === 'history' ? historyMarkup() : state.view === 'favorites' ? favoritesMarkup() : state.view === 'player' ? playerMarkup() : homeMarkup();
-  if (state.view === 'player' && !state.video?.storage_path) {
-    const placeholder = $('#rutube-player', main);
-    const retained = $('#rutube-frame-retainer #rutube-player');
-    if (placeholder && retained) placeholder.replaceWith(retained);
-  }
   document.querySelectorAll('.nav-button').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view || (state.view === 'player' && b.dataset.view === 'home')));
   if (state.view === 'home') grid();
   if (state.view === 'player') mountPlayer();
@@ -230,37 +214,24 @@ function updatePlayerHeader() {
 }
 function openVideo(video, autoplay = true) {
   if (!video) return;
-  const retainedFrame = !video.storage_path ? getRutubeFrame() : null;
-  const reuseRutubeFrame = Boolean(retainedFrame);
-  const sameVideoInFrame = reuseRutubeFrame && retainedFrame.dataset.videoId === String(video.id);
-  // Mark the target before render(): mountRutubePlayer must not replace the iframe src
-  // when we intend to issue player:changeVideo inside the existing player session.
-  if (reuseRutubeFrame && !sameVideoInFrame) retainedFrame.dataset.videoId = String(video.id);
+  // Save the outgoing video's position before switching.
   if (state.video) saveProgress(true);
   const p = progressFor(video.id);
-  state.video = video; state.resume = p ? Number(p.current_time || 0) : 0;
-  state.time = state.resume; state.duration = Number(video.duration || p?.duration_seconds || 0);
-  state.ready = Boolean(reuseRutubeFrame); state.playing = false; state.autoplay = autoplay; state.nextPrompt = false;
-  state.awaitingVideoInit = Boolean(reuseRutubeFrame && !sameVideoInFrame);
+  state.video = video;
+  state.resume = p ? Number(p.current_time || 0) : 0;
+  state.time = state.resume;
+  state.duration = Number(video.duration || p?.duration_seconds || 0);
+  state.ready = false;
+  state.playing = false;
+  state.autoplay = autoplay;
+  state.nextPrompt = false;
+  state.awaitingVideoInit = false;
+  state.playerSuspended = false;
+  state.wasPlayingBeforeSuspend = false;
   state.view = 'player';
-  if (reuseRutubeFrame) {
-    render();
-    if (sameVideoInFrame) {
-      state.awaitingVideoInit = false;
-      if (autoplay) command('player:play', {});
-      state.autoplay = false;
-    } else {
-      command('player:changeVideo', { id: String(video.id) });
-      const expectedId = String(video.id);
-      setTimeout(() => {
-        if (state.awaitingVideoInit && state.video && String(state.video.id) === expectedId) {
-          console.warn('RuTube player:init was not received after changeVideo; session retained without forced iframe reload.');
-        }
-      }, 6000);
-    }
-  } else {
-    render();
-  }
+  // A new iframe is intentional: it guarantees the requested video ID is in
+  // the embed URL, rather than relying on changeVideo in a stale player session.
+  render();
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function mountPlayer() {
