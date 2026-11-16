@@ -245,6 +245,9 @@ function openVideo(video, autoplay = true) {
   const retainedFrame = !video.storage_path ? getRutubeFrame() : null;
   const reuseRutubeFrame = Boolean(retainedFrame);
   const sameVideoInFrame = reuseRutubeFrame && retainedFrame.dataset.videoId === String(video.id);
+  // Mark the target before render(): mountRutubePlayer must not replace the iframe src
+  // when we intend to issue player:changeVideo inside the existing player session.
+  if (reuseRutubeFrame && !sameVideoInFrame) retainedFrame.dataset.videoId = String(video.id);
   if (state.video) saveProgress(true);
   const p = progressFor(video.id);
   state.video = video; state.resume = p ? Number(p.current_time || 0) : 0;
