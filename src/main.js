@@ -170,10 +170,6 @@ function playerMarkup() {
     '<div class="volume-row"><span>♪</span><label for="volume-slider">Громкость</label><input id="volume-slider" type="range" min="0" max="' + (native ? 200 : 100) + '" value="' + Math.round(Math.min(native ? 2 : 1, state.volume) * 100) + '" aria-label="Громкость"><span id="volume-value">' + Math.round(Math.min(native ? 2 : 1, state.volume) * 100) + '%</span><span class="save-note" id="save-note">Место сохраняется автоматически</span><small class="volume-hint" id="volume-hint">' + (native ? 'Усиление до 200%' : 'Усиление доступно для загруженных видео') + '</small></div></div></div>' +
     '<div class="next-suggestion" id="next-suggestion" ' + (state.nextPrompt && next ? '' : 'hidden') + '><div><span class="eyebrow">ИСТОРИЯ ЗАВЕРШЕНА</span><strong>Посмотрим ещё одну?</strong><p>' + (next ? esc(next.title) : '') + '</p></div>' + (next ? '<button class="primary-button" data-player="next">Следующая история <span>→</span></button>' : '') + '</div><p class="player-footnote">' + (native ? 'Это видео загружено в семейную библиотеку. Рекламных вставок в собственном плеере нет.' : 'Воспроизведение предоставляется встроенным плеером RuTube. Повторные рекламные паузы, если их назначает RuTube, нельзя отключить настройкой сайта.') + '</p></section>';
 }
-function uploadMarkup() {
-  if (!db) return '';
-  return '<section class="upload-section"><div class="upload-copy"><span class="eyebrow">СЕМЕЙНАЯ ВИДЕОТЕКА</span><h2>Добавить свои истории</h2><p>Загрузите исходные MP4, WebM или MOV-файлы. Для них работает отдельный плеер без рекламы RuTube.</p><p class="upload-status" id="upload-status" role="status" hidden></p></div><button class="secondary-button upload-button" type="button" data-upload-trigger>' + (state.user ? '＋ Загрузить видео' : 'Войти, чтобы загрузить') + '</button><input id="upload-files" type="file" accept="video/mp4,video/webm,video/quicktime" multiple hidden></section>';
-}
 function getRutubeFrame() {
   return $('#rutube-player') || $('#rutube-frame-retainer #rutube-player');
 }
@@ -200,15 +196,7 @@ function render() {
     if (placeholder && retained) placeholder.replaceWith(retained);
   }
   document.querySelectorAll('.nav-button').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view || (state.view === 'player' && b.dataset.view === 'home')));
-  if (state.view === 'home') {
-    const catalog = $('.catalog-section', main);
-    if (catalog) {
-      const section = document.createElement('div');
-      section.innerHTML = uploadMarkup();
-      if (section.firstElementChild) catalog.before(section.firstElementChild);
-    }
-    grid();
-  }
+  if (state.view === 'home') grid();
   if (state.view === 'player') mountPlayer();
 }
 function setView(view) {
@@ -577,7 +565,6 @@ document.addEventListener('click',async e=>{
   if(t.dataset.openVideo){const v=state.videos.find(x=>String(x.id)===String(t.dataset.openVideo));if(v)openVideo(v,true);return;}
   if(t.hasAttribute('data-scroll')){$('#catalog')?.scrollIntoView({behavior:'smooth'});return;}
   if(t.id==='show-more'){state.visible+=24;grid();return;}
-  if (t.hasAttribute('data-upload-trigger')) { if (!state.user) { accountDialog(); return; } $('#upload-files')?.click(); return; }
   if(t.dataset.player){
     const a=t.dataset.player, native = $('#native-player');
     if (native) {
@@ -669,6 +656,23 @@ async function loadCustomVideos() {
     storage_path: item.storage_path, mime_type: item.mime_type || 'video/mp4',
     size_bytes: Number(item.size_bytes || 0)
   }));
+  // Supabase is the source of truth for uploaded videos. Remove stale local
+  // custom entries, progress and favorites when a video was deleted in the DB.
+  const validCustomIds = new Set(custom.map(video => String(video.id)));
+  const orphanedIds = Object.keys(state.favorites).filter(id => id.startsWith('custom-') && !validCustomIds.has(id));
+  orphanedIds.forEach(id => { delete state.favorites[id]; delete state.progress[id]; });
+  Object.keys(state.progress).forEach(id => {
+    if (id.startsWith('custom-') && !validCustomIds.has(id)) delete state.progress[id];
+  });
+  persistFavorites();
+  persist();
+  if (orphanedIds.length) {
+    const cleanup = await db.from('favorite_videos').delete()
+      .eq('user_id', state.user.id).in('video_id', orphanedIds);
+    if (cleanup.error && !['42P01','PGRST205'].includes(cleanup.error.code)) {
+      console.warn('Could not clean up deleted custom-video favorites:', cleanup.error);
+    }
+  }
   state.videos = [...custom, ...state.videos.filter(video => !video.storage_path)];
   if (state.view !== 'player') render();
 }
