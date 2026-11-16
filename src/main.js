@@ -622,29 +622,29 @@ document.addEventListener('change',e=>{
   }
 });
 document.addEventListener('submit',e=>{if(e.target.id==='auth-form'){e.preventDefault();authSubmit(e.target);}});
-function suspendRutubeForBackground() {
+function pauseRutubeForBackground() {
   if (state.view !== 'player' || state.video?.storage_path || !getRutubeFrame() || !state.ready || state.playerSuspended) return;
   state.wasPlayingBeforeSuspend = state.playing;
   state.playerSuspended = true;
-  command('player:suspend', {});
+  if (state.wasPlayingBeforeSuspend) command('player:pause', {});
+  state.playing = false;
 }
-function wakeRutubeFromBackground() {
+function resumeRutubeFromBackground() {
   if (!state.playerSuspended || !getRutubeFrame()) return;
   state.playerSuspended = false;
-  command('player:wakeup', {});
   if (state.wasPlayingBeforeSuspend) {
     setTimeout(() => {
       if (state.view === 'player' && !state.video?.storage_path) command('player:play', {});
-    }, 450);
+    }, 250);
   }
   state.wasPlayingBeforeSuspend = false;
 }
 window.addEventListener('message',playerMessage);
-window.addEventListener('pagehide',()=>{saveProgress(true);suspendRutubeForBackground();});
-window.addEventListener('pageshow',wakeRutubeFromBackground);
+window.addEventListener('pagehide',()=>{saveProgress(true);pauseRutubeForBackground();});
+window.addEventListener('pageshow',resumeRutubeFromBackground);
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){saveProgress(true);suspendRutubeForBackground();}
-  else wakeRutubeFromBackground();
+  else resumeRutubeFromBackground();
 });
 setInterval(()=>{if(state.view==='player'&&state.playing)saveProgress(false);},10000);
 
