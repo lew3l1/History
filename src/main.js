@@ -20,6 +20,7 @@ const state = {
   time: 0, duration: 0, volume: Number(localStorage.getItem(VOLUME_KEY) || .8),
   ready: false, playing: false, autoplay: false, resume: 0, nextPrompt: false,
   awaitingVideoInit: false, adVideoIds: new Set(), adWarningShown: false,
+  playerSuspended: false, wasPlayingBeforeSuspend: false,
   authMode: 'signin', search: '', visible: 24, lastCloudSave: 0, cloudBusy: false
 };
 let toastTimer;
@@ -165,7 +166,7 @@ function playerMarkup() {
     '<div class="player-card"><div class="video-stage ' + (native ? 'is-native-video' : 'is-rutube-video') + '">' + media + '</div>' +
     '<div class="player-controls"><div class="seek-row"><span id="current-time">0:00</span><input id="seek-slider" type="range" min="0" max="1000" value="0" aria-label="Позиция в видео"><span id="duration-time">0:00</span></div>' +
     '<div class="control-row"><button class="skip-control" data-player="rewind" type="button" aria-label="Назад на 15 секунд"><span>↶</span><small>15 сек.</small></button><button class="play-control" data-player="toggle" type="button" aria-label="Пауза или воспроизведение"><span id="play-symbol">▶</span></button><button class="skip-control" data-player="forward" type="button" aria-label="Вперёд на 30 секунд"><span>↷</span><small>30 сек.</small></button></div>' +
-    '<div class="track-controls"><button class="track-button" data-player="previous" type="button" ' + (prev ? '' : 'disabled') + '><span>⏮</span><small>Предыдущая</small></button><button class="track-button stop-track-button" data-player="stop" type="button"><span>■</span><small>Остановить</small></button><button class="track-button" data-player="next" type="button" ' + (next ? '' : 'disabled') + '><span>⏭</span><small>Следующая</small></button></div>' +
+    '<div class="track-controls"><button class="track-button" data-player="previous" type="button" ' + (prev ? '' : 'disabled') + '><span>⏮</span><small>Предыдущая</small></button><button class="track-button stop-track-button" data-player="stop" type="button"><span>■</span><small>С начала</small></button><button class="track-button" data-player="next" type="button" ' + (next ? '' : 'disabled') + '><span>⏭</span><small>Следующая</small></button></div>' +
     '<div class="volume-row"><span>♪</span><label for="volume-slider">Громкость</label><input id="volume-slider" type="range" min="0" max="' + (native ? 200 : 100) + '" value="' + Math.round(Math.min(native ? 2 : 1, state.volume) * 100) + '" aria-label="Громкость"><span id="volume-value">' + Math.round(Math.min(native ? 2 : 1, state.volume) * 100) + '%</span><span class="save-note" id="save-note">Место сохраняется автоматически</span><small class="volume-hint" id="volume-hint">' + (native ? 'Усиление до 200%' : 'Усиление доступно для загруженных видео') + '</small></div></div></div>' +
     '<div class="next-suggestion" id="next-suggestion" ' + (state.nextPrompt && next ? '' : 'hidden') + '><div><span class="eyebrow">ИСТОРИЯ ЗАВЕРШЕНА</span><strong>Посмотрим ещё одну?</strong><p>' + (next ? esc(next.title) : '') + '</p></div>' + (next ? '<button class="primary-button" data-player="next">Следующая история <span>→</span></button>' : '') + '</div><p class="player-footnote">' + (native ? 'Это видео загружено в семейную библиотеку. Рекламных вставок в собственном плеере нет.' : 'Воспроизведение предоставляется встроенным плеером RuTube. Повторные рекламные паузы, если их назначает RuTube, нельзя отключить настройкой сайта.') + '</p></section>';
 }
@@ -173,9 +174,31 @@ function uploadMarkup() {
   if (!db) return '';
   return '<section class="upload-section"><div class="upload-copy"><span class="eyebrow">СЕМЕЙНАЯ ВИДЕОТЕКА</span><h2>Добавить свои истории</h2><p>Загрузите исходные MP4, WebM или MOV-файлы. Для них работает отдельный плеер без рекламы RuTube.</p><p class="upload-status" id="upload-status" role="status" hidden></p></div><button class="secondary-button upload-button" type="button" data-upload-trigger>' + (state.user ? '＋ Загрузить видео' : 'Войти, чтобы загрузить') + '</button><input id="upload-files" type="file" accept="video/mp4,video/webm,video/quicktime" multiple hidden></section>';
 }
+function getRutubeFrame() {
+  return $('#rutube-player') || $('#rutube-frame-retainer #rutube-player');
+}
+function parkRutubeFrame() {
+  const frame = $('#rutube-player');
+  if (!frame) return;
+  let retainer = $('#rutube-frame-retainer');
+  if (!retainer) {
+    retainer = document.createElement('div');
+    retainer.id = 'rutube-frame-retainer';
+    retainer.className = 'player-frame-retainer';
+    retainer.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(retainer);
+  }
+  if (frame.parentElement !== retainer) retainer.appendChild(frame);
+}
 function render() {
   const main = $('#main-view');
+  parkRutubeFrame();
   main.innerHTML = state.view === 'history' ? historyMarkup() : state.view === 'favorites' ? favoritesMarkup() : state.view === 'player' ? playerMarkup() : homeMarkup();
+  if (state.view === 'player' && !state.video?.storage_path) {
+    const placeholder = $('#rutube-player', main);
+    const retained = $('#rutube-frame-retainer #rutube-player');
+    if (placeholder && retained) placeholder.replaceWith(retained);
+  }
   document.querySelectorAll('.nav-button').forEach(b => b.classList.toggle('is-active', b.dataset.view === state.view || (state.view === 'player' && b.dataset.view === 'home')));
   if (state.view === 'home') {
     const catalog = $('.catalog-section', main);
@@ -189,7 +212,15 @@ function render() {
   if (state.view === 'player') mountPlayer();
 }
 function setView(view) {
-  if (state.view === 'player' && view !== 'player') saveProgress(true);
+  if (state.view === 'player' && view !== 'player') {
+    saveProgress(true);
+    if (state.video?.storage_path) {
+      $('#native-player')?.pause();
+    } else if (getRutubeFrame()) {
+      command('player:pause', {});
+    }
+    state.playing = false;
+  }
   state.view = view; render(); window.scrollTo({top:0,behavior:'smooth'});
 }
 function updatePlayerHeader() {
@@ -211,28 +242,31 @@ function updatePlayerHeader() {
 }
 function openVideo(video, autoplay = true) {
   if (!video) return;
-  const previous = state.video;
-  const reuseRutubeFrame = state.view === 'player' && previous && !previous.storage_path && !video.storage_path && $('#rutube-player');
-  if (previous) saveProgress(true);
+  const retainedFrame = !video.storage_path ? getRutubeFrame() : null;
+  const reuseRutubeFrame = Boolean(retainedFrame);
+  const sameVideoInFrame = reuseRutubeFrame && retainedFrame.dataset.videoId === String(video.id);
+  if (state.video) saveProgress(true);
   const p = progressFor(video.id);
   state.video = video; state.resume = p ? Number(p.current_time || 0) : 0;
   state.time = state.resume; state.duration = Number(video.duration || p?.duration_seconds || 0);
   state.ready = Boolean(reuseRutubeFrame); state.playing = false; state.autoplay = autoplay; state.nextPrompt = false;
-  state.awaitingVideoInit = Boolean(reuseRutubeFrame);
+  state.awaitingVideoInit = Boolean(reuseRutubeFrame && !sameVideoInFrame);
   state.view = 'player';
   if (reuseRutubeFrame) {
-    updatePlayerHeader();
-    updatePlayer();
-    command('player:changeVideo', { id: String(video.id) });
-    const expectedId = String(video.id);
-    setTimeout(() => {
-      if (state.awaitingVideoInit && state.video && String(state.video.id) === expectedId) {
-        state.awaitingVideoInit = false;
-        if (state.resume > 0) command('player:setCurrentTime', { time: state.resume });
-        if (state.autoplay) command('player:play', {});
-        state.autoplay = false;
-      }
-    }, 1800);
+    render();
+    if (sameVideoInFrame) {
+      state.awaitingVideoInit = false;
+      if (autoplay) command('player:play', {});
+      state.autoplay = false;
+    } else {
+      command('player:changeVideo', { id: String(video.id) });
+      const expectedId = String(video.id);
+      setTimeout(() => {
+        if (state.awaitingVideoInit && state.video && String(state.video.id) === expectedId) {
+          console.warn('RuTube player:init was not received after changeVideo; session retained without forced iframe reload.');
+        }
+      }, 6000);
+    }
   } else {
     render();
   }
@@ -387,7 +421,7 @@ function playerMessage(event) {
       }
       break;
     }
-    case 'player:playStart': state.playing = true; state.autoplay = false; updatePlayer(); break;
+    case 'player:playStart': state.playing = true; state.autoplay = false; state.playerSuspended = false; updatePlayer(); break;
     case 'player:currentTime': if (Number.isFinite(Number(d.time))) { state.time = Number(d.time); updatePlayer(); } break;
     case 'player:durationChange':
     case 'player:duration':
@@ -553,7 +587,7 @@ document.addEventListener('click',async e=>{
       if (a === 'forward') native.currentTime = Math.min(native.duration || Infinity, native.currentTime + 30);
     } else {
       if(a==='toggle'){command(state.playing?'player:pause':'player:play',{});state.playing=!state.playing;updatePlayer();if(!state.playing)saveProgress(true);}
-      if(a==='stop'){command('player:stop',{});state.playing=false;state.time=0;command('player:setCurrentTime',{time:0});saveProgress(true);updatePlayer();}
+      if(a==='stop'){command('player:pause',{});state.playing=false;state.time=0;command('player:setCurrentTime',{time:0});saveProgress(true);updatePlayer();}
       if(a==='rewind')command('player:relativelySeek',{time:-15});
       if(a==='forward')command('player:relativelySeek',{time:30});
     }
@@ -585,9 +619,30 @@ document.addEventListener('change',e=>{
   }
 });
 document.addEventListener('submit',e=>{if(e.target.id==='auth-form'){e.preventDefault();authSubmit(e.target);}});
+function suspendRutubeForBackground() {
+  if (state.view !== 'player' || state.video?.storage_path || !getRutubeFrame() || !state.ready || state.playerSuspended) return;
+  state.wasPlayingBeforeSuspend = state.playing;
+  state.playerSuspended = true;
+  command('player:suspend', {});
+}
+function wakeRutubeFromBackground() {
+  if (!state.playerSuspended || !getRutubeFrame()) return;
+  state.playerSuspended = false;
+  command('player:wakeup', {});
+  if (state.wasPlayingBeforeSuspend) {
+    setTimeout(() => {
+      if (state.view === 'player' && !state.video?.storage_path) command('player:play', {});
+    }, 450);
+  }
+  state.wasPlayingBeforeSuspend = false;
+}
 window.addEventListener('message',playerMessage);
-window.addEventListener('pagehide',()=>saveProgress(true));
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveProgress(true);});
+window.addEventListener('pagehide',()=>{saveProgress(true);suspendRutubeForBackground();});
+window.addEventListener('pageshow',wakeRutubeFromBackground);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden'){saveProgress(true);suspendRutubeForBackground();}
+  else wakeRutubeFromBackground();
+});
 setInterval(()=>{if(state.view==='player'&&state.playing)saveProgress(false);},10000);
 
 async function initAuth(){
