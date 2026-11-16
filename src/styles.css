@@ -63,3 +63,8 @@
 .video-stage.is-rutube-video iframe{display:block;width:100%;height:100%;min-height:220px;border:0}
 .volume-row{flex-wrap:wrap}.volume-hint{flex-basis:100%;margin-left:24px;color:var(--muted);font-size:10px;font-weight:500}
 @media(max-width:540px){.upload-section{align-items:stretch;flex-direction:column;gap:14px;margin:18px 0 24px;padding:18px}.upload-copy h2{font-size:21px}.upload-button{width:100%}#native-player{min-height:185px}.volume-hint{margin-left:0}}
+
+
+/* Keep the same cross-origin RuTube iframe alive while navigating within the SPA. */
+.player-frame-retainer{position:fixed;left:-10000px;top:0;width:2px;height:2px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1}
+.player-frame-retainer iframe{display:block;width:2px;height:2px;border:0}
